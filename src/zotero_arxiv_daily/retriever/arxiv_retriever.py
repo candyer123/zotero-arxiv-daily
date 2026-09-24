@@ -114,7 +114,8 @@ class ArxivRetriever(BaseRetriever):
             raise ValueError("category must be specified for arxiv.")
 
     def _retrieve_raw_papers(self) -> list[ArxivResult]:
-        client = arxiv.Client(num_retries=10, delay_seconds=10)
+        client = arxiv.Client(num_retries=1, delay_seconds=3)
+        single_client = arxiv.Client(num_retries=0, delay_seconds=3)
         query = '+'.join(self.config.source.arxiv.category)
         include_cross_list = self.config.source.arxiv.get("include_cross_list", False)
         # Get the latest paper from arxiv rss feed
@@ -133,10 +134,12 @@ class ArxivRetriever(BaseRetriever):
 
         # Get full information of each paper from arxiv api
         bar = tqdm(total=len(all_paper_ids))
-        max_batch_retries = 5
+        max_batch_retries = 2
         batch_retry_delay = 30
-        for i in range(0, len(all_paper_ids), 20):
-            batch_ids = all_paper_ids[i:i + 20]
+       batch_size = 5
+
+for i in range(0, len(all_paper_ids), batch_size):
+    batch_ids = all_paper_ids[i:i + batch_size]
             search = arxiv.Search(id_list=batch_ids)
 
             for attempt in range(max_batch_retries):
@@ -151,20 +154,20 @@ class ArxivRetriever(BaseRetriever):
                         if attempt < max_batch_retries - 1:
                             wait = batch_retry_delay * (attempt + 1)
                             logger.warning(
-                                f"arXiv API 429 on batch {i // 20}, "
+                                f"arXiv API 429 on batch {i // batch_size}, "
                                 f"retry {attempt + 1}/{max_batch_retries} in {wait}s"
                             )
                             sleep(wait)
                             continue
 
                         logger.warning(
-                            f"arXiv API 429 on batch {i // 20} after "
+                            f"arXiv API 429 on batch {i // batch_size} after "
                             f"{max_batch_retries} retries. "
                             "Falling back to per-paper requests."
                         )
                     else:
                         logger.warning(
-                            f"arXiv API error on batch {i // 20} "
+                            f"arXiv API error on batch {i // batch_size} "
                             f"(status {exc.status}). "
                             "Falling back to per-paper requests."
                         )
@@ -175,7 +178,7 @@ class ArxivRetriever(BaseRetriever):
                         try:
                             batch.extend(
                                 list(
-                                    client.results(
+                                   single_client.results(
                                         arxiv.Search(id_list=[paper_id])
                                     )
                                 )
@@ -194,7 +197,7 @@ class ArxivRetriever(BaseRetriever):
                     raw_papers.extend(batch)
                     break
 
-            if i + 20 < len(all_paper_ids):
+           if i + batch_size < len(all_paper_ids):
                 sleep(3)
         bar.close()
 
